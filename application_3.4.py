@@ -83,7 +83,10 @@ class CurrentControl(HasTraits):
 
     def initialize(self):
         self.CS=GS200()
-        self.VS=Picoscope()
+        try:
+            self.VS=Picoscope()
+        except:
+            print("Error while connecting to Picoscope")
         
         #turn the input string into a list of currents
         self.curr_list = self.currents.split(',')
@@ -275,8 +278,8 @@ class Bridge(HasTraits):
     def initialize(self):
         # self.ac=rm.open_resource('GPIB0::13::INSTR')
         # self.ac=rm.open_resource('GPIB1::1::INSTR')
-        # self.MS = ls370(address='13', gpib='GPIB0') #Underground 4
-        self.MS = ls370(address='1', gpib='GPIB1') #shielded room
+        self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
+        # self.MS = ls370(address='1', gpib='GPIB1') #shielded room
         
         if self.Channel_1:
             self.MS.setResRange(channel='1',mode=self.ExcitMode_1_,excitRange=self.ExcitRange_1_,resRange=self.ResRange_1_, autorange='0', csOff='0')
@@ -584,6 +587,7 @@ class CurrentSetThread(Thread):
     
     def run(self):
         #wait tBefore before setting the current
+        print(f"sleeping for {self.currentControl_inst.tBefore_s} seconds")
         self.active_sleep(self.currentControl_inst.tBefore_s)
         if self.wants_abort:
             return
@@ -639,6 +643,7 @@ class WaitNsetThread(Thread):
     
     def run(self):
         #Start with fast scans before current is applied 
+        self.currSet.start()
         self.active_sleep(self.currentControl_inst.tBefore_s-self.ls370_inst.stblz_time)
         
         while not self.wants_abort:
@@ -658,7 +663,7 @@ class WaitNsetThread(Thread):
                 
             #check if it was not aborted before sleeping
             if not self.wants_abort:
-                #sleep for user defined time stblz_time before and after the current change
+                #sleep for user defined time stblz_time before and after the current change (fast mode)
                 self.active_sleep(self.ls370_inst.stblz_time * 2)
                 ######################check if functionality aborted#####################
                 with self.state:
@@ -678,7 +683,7 @@ class WaitNsetThread(Thread):
                 return        
             # self.active_sleep(self.ls370_inst.stable_time) #old implementation
             #sleep with slow mode on between the current changes
-            self.active_sleep(self.currentControl_inst.tOn - 2*self.ls370_inst.stblz_time)
+            self.active_sleep(self.currentControl_inst.tOn_s - 2*self.ls370_inst.stblz_time)
             
         #restart the function after breaking
         if not self.wants_abort:
@@ -773,7 +778,7 @@ class AcquisitionThread(Thread):
         itr = 0
         amp = int(self.getCurrent())
         self.ac_bridge.curr_scans = self.ac_bridge.Nscans #initialize the variable that tracks the current Nscans
-        self.waitNsetThread = WaitNsetThread(self.ac_bridge, self.ac_bridge.Nscans)
+        self.waitNsetThread = WaitNsetThread(self.ac_bridge, self.ac_bridge.Nscans, self.current_control)
         if not self.wants_abort and not self.ac_bridge.disable_switching:
             self.waitNsetThread.start()
             self.waitNsetThread.wants_abort = False
@@ -900,6 +905,7 @@ class ControlPanel(HasTraits):
             self.acquisition_thread.getCurrent = self.ac_bridge.getCurrent
             self.acquisition_thread.f_name = self.f_name
             self.acquisition_thread.ac_bridge = self.ac_bridge
+            self.acquisition_thread.current_control = self.current_control
             self.acquisition_thread.initialize_current = self.current_control.initialize
             self.acquisition_thread.start()
     
