@@ -237,8 +237,8 @@ class Bridge(HasTraits):
     def initialize(self):
         # self.ac=rm.open_resource('GPIB0::13::INSTR')
         # self.ac=rm.open_resource('GPIB1::1::INSTR')
-        # self.MS = ls370(address='13', gpib='GPIB0') #Underground 4
-        self.MS = ls370(address='1', gpib='GPIB1') #shielded room
+        self.MS = ls370(address='13', gpib='GPIB0') #Underground 4
+        # self.MS = ls370(address='1', gpib='GPIB1') #shielded room
         
         if self.Channel_1:
             self.MS.setResRange(channel='1',mode=self.ExcitMode_1_,excitRange=self.ExcitRange_1_,resRange=self.ResRange_1_, autorange='0', csOff='0')
@@ -557,6 +557,8 @@ class WaitNsetThread(Thread):
             with self.state:
                 if self.paused:
                     self.state.wait()  # Block execution until notified.
+            if self.wants_abort:
+                return
             # print("switching to fast mode")
             self.ls370_inst.curr_scans = self.Nscans_fast #sets the scans to fast mode
             if self.ls370_inst.Filter_1:
@@ -572,7 +574,9 @@ class WaitNsetThread(Thread):
                     if self.paused:
                         self.state.wait()  # Block execution until notified.
                         break
-                    
+                if self.wants_abort:
+                    return
+                
                 #update to slow mode
                 # print("switching to slow mode")
                 self.ls370_inst.curr_scans = int(self.ls370_inst.Nscans_stable)
@@ -678,7 +682,8 @@ class AcquisitionThread(Thread):
             res =self.acquireALL(self.experiment, First)
             curr_time = time()
             
-            with warnings.catch_warnings(action="ignore"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
                 fout = open(datafile,"a")
                 fout.write('%s\t%f\t%s \t%f\t%f\t%f\n' % (curr_time,res[0],amp,res[1],res[2],res[3]))
                 fout.close()
@@ -715,7 +720,7 @@ class AcquisitionThread(Thread):
             
             itr += 1
 
-        self.waitNsetThread.join()
+        # self.waitNsetThread.join()
         self.display('Data acquisition stopped')
 
 #! The GUI elements
@@ -768,6 +773,9 @@ class ControlPanel(HasTraits):
         if self.acquisition_thread and self.acquisition_thread.is_alive():
             self.acquisition_thread.wants_abort = True
             self.acquisition_thread.waitNsetThread.wants_abort = True
+            self.acquisition_thread.waitNsetThread.paused = False
+            # self.acquisition_thread.waitNsetThread.state.acquire()
+            self.acquisition_thread.waitNsetThread.state.notify()
         else:
             self.acquisition_thread = AcquisitionThread()
             self.acquisition_thread.display = self.add_line
