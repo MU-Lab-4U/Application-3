@@ -25,6 +25,7 @@ import numpy as np
 from time import ctime, time
 import os, datetime
 from instruments2 import ls370
+import warnings
 
 
 #! User interface objects
@@ -236,7 +237,8 @@ class Bridge(HasTraits):
     def initialize(self):
         # self.ac=rm.open_resource('GPIB0::13::INSTR')
         # self.ac=rm.open_resource('GPIB1::1::INSTR')
-        self.MS = ls370(address='1')
+        # self.MS = ls370(address='13', gpib='GPIB0') #Underground 4
+        self.MS = ls370(address='1', gpib='GPIB1') #shielded room
         
         if self.Channel_1:
             self.MS.setResRange(channel='1',mode=self.ExcitMode_1_,excitRange=self.ExcitRange_1_,resRange=self.ResRange_1_, autorange='0', csOff='0')
@@ -563,22 +565,23 @@ class WaitNsetThread(Thread):
                 
             #check if it was not aborted before sleeping
             if not self.wants_abort: 
-                sleep(self.ls370_inst.stblz_time)
+                # sleep(self.ls370_inst.stblz_time)
+                self.active_sleep(self.ls370_inst.stblz_time)
                 
                 with self.state:
                     if self.paused:
                         self.state.wait()  # Block execution until notified.
                         break
-                
+                    
                 #update to slow mode
                 # print("switching to slow mode")
                 self.ls370_inst.curr_scans = int(self.ls370_inst.Nscans_stable)
                 if self.ls370_inst.Filter_1:
                     # print(f"setting filter to slow mode {self.ls370_inst.SetlTime_1_slow}")
                     self.ls370_inst.MS.setFilter(on=1,channel='1',setlT=self.ls370_inst.SetlTime_1_slow, wind=self.ls370_inst.Window_1_slow)
-            #check if it was not aborted before sleeping
-            if not self.wants_abort:
-                sleep(self.ls370_inst.stable_time)
+                    
+            #check if not aborted while waiting
+            self.active_sleep(self.ls370_inst.stable_time)
                 
         #restart the function after breaking
         if not self.wants_abort:
@@ -592,6 +595,15 @@ class WaitNsetThread(Thread):
         with self.state:
             self.paused = False
             self.state.notify()  # Unblock self if waiting.
+    
+    def active_sleep(self, dur):
+        curr_time = time()
+        end_time = curr_time + dur
+        while time() < end_time:
+            if not self.wants_abort:
+                sleep(0.01)
+            else:
+                return
 
 class AcquisitionThread(Thread):
     """ Acquisition loop. This is the worker thread that retrieves data 
@@ -665,10 +677,11 @@ class AcquisitionThread(Thread):
         while not self.wants_abort:
             res =self.acquireALL(self.experiment, First)
             curr_time = time()
-
-            fout = open(datafile,"a")
-            fout.write('%s\t%f\t%s \t%f\t%f\t%f\n' % (curr_time,res[0],amp,res[1],res[2],res[3]))
-            fout.close()
+            
+            with warnings.catch_warnings(action="ignore"):
+                fout = open(datafile,"a")
+                fout.write('%s\t%f\t%s \t%f\t%f\t%f\n' % (curr_time,res[0],amp,res[1],res[2],res[3]))
+                fout.close()
             
             #increment the current (if applicable)
             if itr % self.getStableTime() == 0 and itr != 0:

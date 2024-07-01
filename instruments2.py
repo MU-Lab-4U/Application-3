@@ -405,7 +405,7 @@ class ls370(object):
         try:
             print("Checking connection to 370 AC Resistance Bridge ...")
             # self.ac=instrument('GPIB1::'+address+'::INSTR',**kwargs)
-            self.ac = rm.open_resource(gpib+address+'::INSTR', **kwargs)
+            self.ac = rm.open_resource(gpib+'::'+address+'::INSTR', **kwargs)
         except pyvisa.VisaIOError as e:
             print("Problem while connecting to AC bridge LS370: %s" % e)
         else:
