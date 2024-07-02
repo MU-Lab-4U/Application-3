@@ -66,7 +66,8 @@ class CurrentControl(HasTraits):
     tOff = Float(5, label="Time with current off [min]")
     currents = String("3E-7,5E-7,7E-7", label="List of currents applied", desc="List of all currents to be applied, in order, seperated with comma (\',\'), no whitespace")
     apply_curr = Bool(False, label="Enable applying current", desc="WARNING: Don't use this mode together with \"slow scans only\"")
-    
+    CS = None
+    VS = None
     
     view = View(Group(Group(
                 Item('apply_curr'),
@@ -84,7 +85,8 @@ class CurrentControl(HasTraits):
     def initialize(self):
         if self.apply_curr:
             try:
-                self.CS=GS200()
+                if not self.CS:
+                    self.CS=GS200()
                 sleep(1)
                 self.CS.SetMode("CURR")
                 sleep(1)
@@ -92,7 +94,13 @@ class CurrentControl(HasTraits):
             except Exception as e:
                 print(f"Error while connecting to GS200: {e}")
             try:
-                self.VS=Picoscope()
+                if not self.VS:
+                    self.VS=Picoscope()
+                sleep(1)
+                self.VS.MeasParam('A')
+                self.VS.MeasParam('B',en=False)
+                self.VS.MeasParam('C',en=False)
+                self.VS.MeasParam('D',en=False)
             except:
                 print("Error while connecting to Picoscope")
             
@@ -289,8 +297,8 @@ class Bridge(HasTraits):
     def initialize(self):
         # self.ac=rm.open_resource('GPIB0::13::INSTR')
         # self.ac=rm.open_resource('GPIB1::1::INSTR')
-        # self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
-        self.MS = ls370(address='1', gpib='GPIB1') #shielded room
+        self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
+        # self.MS = ls370(address='1', gpib='GPIB1') #shielded room
         
         if self.Channel_1:
             self.MS.setResRange(channel='1',mode=self.ExcitMode_1_,excitRange=self.ExcitRange_1_,resRange=self.ResRange_1_, autorange='0', csOff='0')
@@ -662,7 +670,7 @@ class WaitNsetThread(Thread):
             print("Started current control thread")
         #Start with fast scans before current is applied 
         if self.currentControl_inst.apply_curr:
-            self.active_sleep(self.currentControl_inst.tBefore_s-self.ls370_inst.stblz_time)
+            self.active_sleep(self.currentControl_inst.tBefore_s-self.ls370_inst.stblz_time-2)
         
         while not self.wants_abort:
             ##############pauses the thread if "Only use slow scans" is active##################
@@ -675,19 +683,22 @@ class WaitNsetThread(Thread):
                 return
             ####################################################################################
             # print("switching to fast mode")
-            self.ls370_inst.curr_scans = self.Nscans_fast #sets the scans to fast mode
+            #first apply the filter
             if self.ls370_inst.Filter_1:
                 #sets the filter to fast mode
                 self.ls370_inst.MS.setFilter(on=1,channel='1',setlT=self.ls370_inst.SetlTime_1, wind=self.ls370_inst.Window_1)
+            self.active_sleep(2) #wait for filter
+            self.ls370_inst.curr_scans = self.Nscans_fast #sets the scans to fast mode
+            
                 
             #check if it was not aborted before sleeping
             if not self.wants_abort:
                 #sleep for user defined time stblz_time before and after the current change (fast mode)
                 if self.currentControl_inst.apply_curr:
-                    self.active_sleep(self.ls370_inst.stblz_time * 2)
+                    self.active_sleep(self.ls370_inst.stblz_time * 2-2)
                 else:
                     #if current control is not active, just wait for the given time
-                    self.active_sleep(self.ls370_inst.stblz_time)
+                    self.active_sleep(self.ls370_inst.stblz_time-2)
                 ######################check if functionality aborted#####################
                 with self.state:
                     if self.paused:
@@ -697,10 +708,13 @@ class WaitNsetThread(Thread):
                     return
                 #########################################################################
                 #update to slow mode
-                self.ls370_inst.curr_scans = int(self.ls370_inst.Nscans_stable)
+                #first set filter to slow mode
                 if self.ls370_inst.Filter_1:
                     #set the filter to slow mode
                     self.ls370_inst.MS.setFilter(on=1,channel='1',setlT=self.ls370_inst.SetlTime_1_slow, wind=self.ls370_inst.Window_1_slow)
+                self.active_sleep(2) #wait for filter
+                self.ls370_inst.curr_scans = int(self.ls370_inst.Nscans_stable)
+                
             else:
                 if self.currentControl_inst.apply_curr:
                     self.currSet.wants_abort = True
@@ -708,9 +722,9 @@ class WaitNsetThread(Thread):
             # self.active_sleep(self.ls370_inst.stable_time) #old implementation
             #sleep with slow mode on between the current changes
             if self.currentControl_inst.apply_curr:
-                self.active_sleep(self.currentControl_inst.tOn_s - 2*self.ls370_inst.stblz_time)
+                self.active_sleep(self.currentControl_inst.tOn_s - 2*self.ls370_inst.stblz_time-2)
             else:
-                self.active_sleep(self.ls370_inst.stable_time)
+                self.active_sleep(self.ls370_inst.stable_time-2)
             
         #restart the function after breaking
         if not self.wants_abort:
@@ -821,7 +835,7 @@ class AcquisitionThread(Thread):
                 gs200_inst = self.current_control.CS
                 picoscope_inst = self.current_control.VS
                 gs200_I_meas = gs200_inst.GetCurrent()
-                picoscope_v_meas = np.average(picoscope_inst.getData('A',5E5,int(1e5)))
+                picoscope_v_meas = np.average(picoscope_inst.getData('A',5E5,int(1e5),resolution='16'))
             else:
                 gs200_I_meas = 0.0
                 picoscope_v_meas = 0.0
