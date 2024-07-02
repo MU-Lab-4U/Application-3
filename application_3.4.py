@@ -42,7 +42,6 @@ class Experiment(HasTraits):
     x = Float(50, label="X", desc="X position of the center")
     y = Float(50, label="Y", desc="Y position of the center")
 
-
 class Results(HasTraits):
     """ Object used to display the results.
     """
@@ -75,7 +74,7 @@ class CurrentControl(HasTraits):
                 Item('tBefore'),
                 Item('tOn'),
                 Item('tOff'),
-                Item('currents'), enabled_when='apply_curr')), show_border = True)
+                Item('currents', springy=False, resizable=True), enabled_when='apply_curr')), show_border = True)
                 )
     trait_view_elements_changed = False
     
@@ -825,6 +824,8 @@ class AcquisitionThread(Thread):
         if not self.wants_abort and not self.ac_bridge.disable_switching:
             self.waitNsetThread.start()
             self.waitNsetThread.wants_abort = False
+        #accumulation array
+        acc_arr = []
         
         while not self.wants_abort:
             res =self.acquireALL(self.experiment, First)
@@ -840,12 +841,19 @@ class AcquisitionThread(Thread):
                 gs200_I_meas = 0.0
                 picoscope_v_meas = 0.0
 
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
+            #accumulate the values in arrays and only put them to the file every x iterations
+            res_s = '%s\t%f\t%s \t%s\t%s\t%f\t%f\t%f\n' % (curr_time,res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3])
+            acc_arr.append(res_s)
+            x = 20
+            if itr % x == 0 and itr != 0:
                 fout = open(datafile,"a")
-                #Write to file, following colums: Time | AC370 Ch1 | I from AC370 | I from GS200 | V from Picoscope | AC370 Ch2 | AC370 Ch3 | AC370 Ch4
-                fout.write('%s\t%f\t%s \t%s\t%s\t%f\t%f\t%f\n' % (curr_time,res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3]))
+                for res in acc_arr:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        #Write to file, following colums: Time | AC370 Ch1 | I from AC370 | I from GS200 | V from Picoscope | AC370 Ch2 | AC370 Ch3 | AC370 Ch4
+                        fout.write(res)
                 fout.close()
+                acc_arr = []
             
             #increment the current (if applicable)
             if itr % self.getStableTime() == 0 and itr != 0:

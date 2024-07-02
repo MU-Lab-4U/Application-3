@@ -15,6 +15,8 @@ Changes:
  - New Feature: The current can now be changed in the new Current control tab
     - The slow and fast mode switching is now purely based on the On and Off times of the current
     - Stable time is deprecated and Stabilization Time now defines the time before and after applying current
+    - The columns of the output file now look like this:
+         [Time | AC370 Ch1 | I from AC370 | I from GS200 | V from Picoscope | AC370 Ch2 | AC370 Ch3 | AC370 Ch4]
 
 
 version: 3.4
