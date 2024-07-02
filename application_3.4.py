@@ -65,7 +65,7 @@ class CurrentControl(HasTraits):
     tOn = Float(5, label="Time with current on [min]")
     tOff = Float(5, label="Time with current off [min]")
     currents = String("3E-7,5E-7,7E-7", label="List of currents applied", desc="List of all currents to be applied, in order, seperated with comma (\',\'), no whitespace")
-    apply_curr = Bool(False, label="Enable applying current")
+    apply_curr = Bool(False, label="Enable applying current", desc="WARNING: Don't use this mode together with \"slow scans only\"")
     
     
     view = View(Group(Group(
@@ -82,20 +82,26 @@ class CurrentControl(HasTraits):
         self.add_trait(name, trait)
 
     def initialize(self):
-        self.CS=GS200()
-        try:
-            self.VS=Picoscope()
-        except:
-            print("Error while connecting to Picoscope")
-        
-        #turn the input string into a list of currents
-        self.curr_list = self.currents.split(',')
-        self.curr_list = [float(x) for x in self.curr_list]
-        
-        #convert the input to seconds
-        self.tBefore_s = self.tBefore*60
-        self.tOn_s = self.tOn*60
-        self.tOff_s = self.tOff*60
+        if self.apply_curr:
+            try:
+                self.CS=GS200()
+            except:
+                print("Error while connecting to GS200")
+            try:
+                self.VS=Picoscope()
+            except:
+                print("Error while connecting to Picoscope")
+            
+            #turn the input string into a list of currents
+            self.curr_list = self.currents.split(',')
+            self.curr_list = [float(x) for x in self.curr_list]
+            
+            #convert the input to seconds
+            self.tBefore_s = self.tBefore*60
+            self.tOn_s = self.tOn*60
+            self.tOff_s = self.tOff*60
+        else:
+            print("Current control is disabled")
 
 class Bridge(HasTraits):
     """ ls370 bridge objects. Implements both the ls370 parameters controls, and
@@ -157,8 +163,8 @@ class Bridge(HasTraits):
     Tmeas = Float(0, label="Delay", desc="delay between measurements [s]")
     Nscans = Int(1, label="fast Scans", desc="number of scans per point")
     Nscans_stable = Float(20, label="slow Scans", desc="number of scans per point during slow scanning time")
-    stblz_time = Int(10, label="Fast scanning time", desc="Time duration where the number of scans is equal to fastScans [s]")
-    stable_time = Int(10, label="Slow scanning time", desc="Time duration where the number of scans is equal to slowScans [s]")
+    stblz_time = Int(5, label="Fast scanning time", desc="If current control is activated: Time before and after current is applied\nTime duration where the number of scans is equal to fastScans [s]")
+    stable_time = Int(10, label="Slow scanning time", desc="Time duration where the number of scans is equal to slowScans [s] \n (only takes effect if current control is off)")
     curr_scans = 1
     disable_switching = Bool(False, label="Only use slow Scans", desc="Disables switching between the number of scans and only uses the value defined in slow Scans")
     
@@ -278,8 +284,8 @@ class Bridge(HasTraits):
     def initialize(self):
         # self.ac=rm.open_resource('GPIB0::13::INSTR')
         # self.ac=rm.open_resource('GPIB1::1::INSTR')
-        self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
-        # self.MS = ls370(address='1', gpib='GPIB1') #shielded room
+        # self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
+        self.MS = ls370(address='1', gpib='GPIB1') #shielded room
         
         if self.Channel_1:
             self.MS.setResRange(channel='1',mode=self.ExcitMode_1_,excitRange=self.ExcitRange_1_,resRange=self.ResRange_1_, autorange='0', csOff='0')
@@ -550,19 +556,19 @@ class Bridge(HasTraits):
             scan = False
             if (self.Channel_2 or self.Channel_3 or self.Channel_4) or Frst:
                 scan = True
-            R2 = self.MS.acquire(self.curr_scans, self.Tdelay, 1, scan)
+            R2 = self.MS.acquire(self.curr_scans, self.Tdelay, 2, scan)
 
         if self.Channel_3:
             scan = False
             if (self.Channel_2 or self.Channel_3 or self.Channel_4) or Frst:
                 scan = True
-            R3 = self.MS.acquire(self.curr_scans, self.Tdelay, 1, scan)
+            R3 = self.MS.acquire(self.curr_scans, self.Tdelay, 3, scan)
 
         if self.Channel_4:
             scan = False
             if (self.Channel_2 or self.Channel_3 or self.Channel_4) or Frst:
                 scan = True
-            R1 = self.MS.acquire(self.curr_scans, self.Tdelay, 1, scan)
+            R4 = self.MS.acquire(self.curr_scans, self.Tdelay, 4, scan)
 
         return R1,R2,R3,R4
 
@@ -639,12 +645,16 @@ class WaitNsetThread(Thread):
         self.paused = False
         self.currentControl_inst = currentControl_inst
         self.state = threading.Condition()
-        self.currSet = CurrentSetThread(self.currentControl_inst)
+        if self.currentControl_inst.apply_curr:
+            self.currSet = CurrentSetThread(self.currentControl_inst)
     
     def run(self):
+        #start the current control thread
+        if self.currentControl_inst.apply_curr:
+            self.currSet.start()
         #Start with fast scans before current is applied 
-        self.currSet.start()
-        self.active_sleep(self.currentControl_inst.tBefore_s-self.ls370_inst.stblz_time)
+        if self.currentControl_inst.apply_curr:
+            self.active_sleep(self.currentControl_inst.tBefore_s-self.ls370_inst.stblz_time)
         
         while not self.wants_abort:
             ##############pauses the thread if "Only use slow scans" is active##################
@@ -652,7 +662,8 @@ class WaitNsetThread(Thread):
                 if self.paused:
                     self.state.wait()  # Block execution until notified.
             if self.wants_abort:
-                self.currSet.wants_abort = True
+                if self.currentControl_inst.apply_curr:
+                    self.currSet.wants_abort = True
                 return
             ####################################################################################
             # print("switching to fast mode")
@@ -664,7 +675,11 @@ class WaitNsetThread(Thread):
             #check if it was not aborted before sleeping
             if not self.wants_abort:
                 #sleep for user defined time stblz_time before and after the current change (fast mode)
-                self.active_sleep(self.ls370_inst.stblz_time * 2)
+                if self.currentControl_inst.apply_curr:
+                    self.active_sleep(self.ls370_inst.stblz_time * 2)
+                else:
+                    #if current control is not active, just wait for the given time
+                    self.active_sleep(self.ls370_inst.stblz_time)
                 ######################check if functionality aborted#####################
                 with self.state:
                     if self.paused:
@@ -679,11 +694,15 @@ class WaitNsetThread(Thread):
                     #set the filter to slow mode
                     self.ls370_inst.MS.setFilter(on=1,channel='1',setlT=self.ls370_inst.SetlTime_1_slow, wind=self.ls370_inst.Window_1_slow)
             else:
-                self.currSet.wants_abort = True
+                if self.currentControl_inst.apply_curr:
+                    self.currSet.wants_abort = True
                 return        
             # self.active_sleep(self.ls370_inst.stable_time) #old implementation
             #sleep with slow mode on between the current changes
-            self.active_sleep(self.currentControl_inst.tOn_s - 2*self.ls370_inst.stblz_time)
+            if self.currentControl_inst.apply_curr:
+                self.active_sleep(self.currentControl_inst.tOn_s - 2*self.ls370_inst.stblz_time)
+            else:
+                self.active_sleep(self.ls370_inst.stable_time)
             
         #restart the function after breaking
         if not self.wants_abort:
@@ -705,7 +724,8 @@ class WaitNsetThread(Thread):
             if not self.wants_abort:
                 sleep(0.01)
             else:
-                self.currSet.wants_abort = True
+                if self.currentControl_inst.apply_curr:
+                    self.currSet.wants_abort = True
                 return
 
 class AcquisitionThread(Thread):
@@ -752,7 +772,8 @@ class AcquisitionThread(Thread):
         else:
             self.display('AC bridge connected.')
             self.display('Data acquisition started')
-            
+        
+        # if self.currentControl_inst.apply_curr:
         try: 
             self.initialize_current()
         except:
@@ -1048,7 +1069,6 @@ class MainWindow(HasTraits):
                 handler=MainWindowHandler(),
                 
                 buttons=NoButtons)
-
 
 if __name__ == '__main__':
     MainWindow().configure_traits()
