@@ -289,8 +289,8 @@ class Bridge(HasTraits):
     def initialize(self):
         # self.ac=rm.open_resource('GPIB0::13::INSTR')
         # self.ac=rm.open_resource('GPIB1::1::INSTR')
-        self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
-        # self.MS = ls370(address='1', gpib='GPIB1') #shielded room
+        # self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
+        self.MS = ls370(address='1', gpib='GPIB1') #shielded room
         
         if self.Channel_1:
             self.MS.setResRange(channel='1',mode=self.ExcitMode_1_,excitRange=self.ExcitRange_1_,resRange=self.ResRange_1_, autorange='0', csOff='0')
@@ -817,14 +817,19 @@ class AcquisitionThread(Thread):
             curr_time = time()
             
             #TODO Write output from GS200 and Picoscope to file
-            gs200_inst = self.current_control.CS
-            picoscope_inst = self.current_control.VS
-            gs200_I_meas = gs200_inst.GetCurrent()
-            picoscope_v_meas = np.average(picoscope_inst.getData('A',5E5,int(1e5)))
+            if self.current_control.apply_curr:
+                gs200_inst = self.current_control.CS
+                picoscope_inst = self.current_control.VS
+                gs200_I_meas = gs200_inst.GetCurrent()
+                picoscope_v_meas = np.average(picoscope_inst.getData('A',5E5,int(1e5)))
+            else:
+                gs200_I_meas = 0.0
+                picoscope_v_meas = 0.0
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 fout = open(datafile,"a")
+                #Write to file, following colums: Time | AC370 Ch1 | I from AC370 | I from GS200 | V from Picoscope | AC370 Ch2 | AC370 Ch3 | AC370 Ch4 
                 fout.write('%s\t%f\t%s \t%s\t%s\t%f\t%f\t%f\n' % (curr_time,res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3]))
                 fout.close()
             
