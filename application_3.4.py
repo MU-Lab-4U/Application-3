@@ -85,8 +85,12 @@ class CurrentControl(HasTraits):
         if self.apply_curr:
             try:
                 self.CS=GS200()
-            except:
-                print("Error while connecting to GS200")
+                sleep(1)
+                self.CS.SetMode("CURR")
+                sleep(1)
+                self.CS.SetCurrentRange(1E-3)
+            except Exception as e:
+                print(f"Error while connecting to GS200: {e}")
             try:
                 self.VS=Picoscope()
             except:
@@ -95,6 +99,7 @@ class CurrentControl(HasTraits):
             #turn the input string into a list of currents
             self.curr_list = self.currents.split(',')
             self.curr_list = [float(x) for x in self.curr_list]
+            print(self.curr_list)
             
             #convert the input to seconds
             self.tBefore_s = self.tBefore*60
@@ -284,8 +289,8 @@ class Bridge(HasTraits):
     def initialize(self):
         # self.ac=rm.open_resource('GPIB0::13::INSTR')
         # self.ac=rm.open_resource('GPIB1::1::INSTR')
-        # self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
-        self.MS = ls370(address='1', gpib='GPIB1') #shielded room
+        self.MS = ls370(address='13', gpib='GPIB0') #4 Underground
+        # self.MS = ls370(address='1', gpib='GPIB1') #shielded room
         
         if self.Channel_1:
             self.MS.setResRange(channel='1',mode=self.ExcitMode_1_,excitRange=self.ExcitRange_1_,resRange=self.ResRange_1_, autorange='0', csOff='0')
@@ -588,7 +593,7 @@ class CurrentSetThread(Thread):
     wants_abort = False
     
     def __init__(self, currentControl_inst):
-        
+        super().__init__()
         self.currentControl_inst = currentControl_inst
     
     def run(self):
@@ -598,25 +603,25 @@ class CurrentSetThread(Thread):
         if self.wants_abort:
             return
         #begin the current setting loop
-        for setcurrent in self.currentControl_inst.currents:
-            self.currentControl_inst.SetCurrent(setcurrent)
-            self.currentControl_inst.ON()
-            print(str(datetime.now())+' current on with I = '+str(setcurrent))
+        for setcurrent in self.currentControl_inst.curr_list:
+            self.currentControl_inst.CS.SetCurrent(setcurrent) 
+            self.currentControl_inst.CS.ON()
+            print(str(time())+' current on with I = '+str(setcurrent))
             #wait tOn with current on
             self.active_sleep(self.currentControl_inst.tOn_s)
             if self.wants_abort:
                 return
             #switch current off
-            self.currentControl_inst.SetCurrent(0)
-            self.currentControl_inst.OFF()
-            print(str(datetime.now())+' current off')
+            self.currentControl_inst.CS.SetCurrent(0)
+            self.currentControl_inst.CS.OFF()
+            print(str(time())+' current off')
             #wait tOff with no current
             self.active_sleep(self.currentControl_inst.tOff_s)
         
         #switch current off at the end
         setcurrent=0
-        self.currentControl_inst.SetCurrent(setcurrent)
-        self.currentControl_inst.OFF()
+        self.currentControl_inst.CS.SetCurrent(setcurrent)
+        self.currentControl_inst.CS.OFF()
             
             
     def active_sleep(self, dur):
@@ -652,6 +657,7 @@ class WaitNsetThread(Thread):
         #start the current control thread
         if self.currentControl_inst.apply_curr:
             self.currSet.start()
+            print("Started current control thread")
         #Start with fast scans before current is applied 
         if self.currentControl_inst.apply_curr:
             self.active_sleep(self.currentControl_inst.tBefore_s-self.ls370_inst.stblz_time)
@@ -779,7 +785,7 @@ class AcquisitionThread(Thread):
         except:
             self.display('Problem while connecting to Picoscope or Current source')
 
-        dir_test = 'D:\\Data ac370\\'
+        dir_test = 'K:\\Data ac370\\'
         dir = datetime.datetime.now().date().__str__() 
 
         # datafile = dir_test + dir+'_Cp_'+'RuO2_holder_heater_cal_heating_test'+'.dat'
@@ -808,6 +814,9 @@ class AcquisitionThread(Thread):
             res =self.acquireALL(self.experiment, First)
             curr_time = time()
             
+            #TODO Write output from GS200 and Picoscope to file
+            # GS200_inst = self.
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 fout = open(datafile,"a")
@@ -857,8 +866,8 @@ class ControlPanel(HasTraits):
         the right panel of the application, and it hosts the method for
         interaction between the objects and the GUI.
     """
-    dir = 'D:\\Data ac370\\'
-    norm_file_name = datetime.datetime.now().date().__str__()+'_Cal_'+'Standard_100_Ohm_nominal_value_with_RC_filter_30_2poles'+'.dat' 
+    dir = 'K:\\Data ac370\\'
+    norm_file_name = datetime.datetime.now().date().__str__()+'_Cal_'+'Cp_227_New_16mK'+'.dat' 
     
     f_name = File(dir+norm_file_name)
     experiment = Instance(Experiment, ())
