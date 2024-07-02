@@ -829,7 +829,7 @@ class AcquisitionThread(Thread):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 fout = open(datafile,"a")
-                #Write to file, following colums: Time | AC370 Ch1 | I from AC370 | I from GS200 | V from Picoscope | AC370 Ch2 | AC370 Ch3 | AC370 Ch4 
+                #Write to file, following colums: Time | AC370 Ch1 | I from AC370 | I from GS200 | V from Picoscope | AC370 Ch2 | AC370 Ch3 | AC370 Ch4
                 fout.write('%s\t%f\t%s \t%s\t%s\t%f\t%f\t%f\n' % (curr_time,res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3]))
                 fout.close()
             
@@ -923,7 +923,8 @@ class ControlPanel(HasTraits):
             self.acquisition_thread.waitNsetThread.wants_abort = True
             self.acquisition_thread.waitNsetThread.paused = False
             self.acquisition_thread.waitNsetThread.resume()
-            self.acquisition_thread.waitNsetThread.currSet.turnOff()
+            if self.acquisition_thread.current_control.apply_curr:
+                self.acquisition_thread.waitNsetThread.currSet.turnOff()
             self.acquisition_thread.waitNsetThread.join()
             self.ac_bridge.disable_switching = False
             # self.acquisition_thread.waitNsetThread.state.notify()
