@@ -606,7 +606,7 @@ class CurrentSetThread(Thread):
         for setcurrent in self.currentControl_inst.curr_list:
             self.currentControl_inst.CS.SetCurrent(setcurrent) 
             self.currentControl_inst.CS.ON()
-            print(str(time())+' current on with I = '+str(setcurrent))
+            print(str(ctime())+' current on with I = '+str(setcurrent))
             #wait tOn with current on
             self.active_sleep(self.currentControl_inst.tOn_s)
             if self.wants_abort:
@@ -614,15 +614,17 @@ class CurrentSetThread(Thread):
             #switch current off
             self.currentControl_inst.CS.SetCurrent(0)
             self.currentControl_inst.CS.OFF()
-            print(str(time())+' current off')
+            print(str(ctime())+' current off')
             #wait tOff with no current
             self.active_sleep(self.currentControl_inst.tOff_s)
         
         #switch current off at the end
+        self.turnOff()
+    
+    def turnOff(self):
         setcurrent=0
         self.currentControl_inst.CS.SetCurrent(setcurrent)
         self.currentControl_inst.CS.OFF()
-            
             
     def active_sleep(self, dur):
         curr_time = time()
@@ -815,12 +817,15 @@ class AcquisitionThread(Thread):
             curr_time = time()
             
             #TODO Write output from GS200 and Picoscope to file
-            # GS200_inst = self.
+            gs200_inst = self.current_control.CS
+            picoscope_inst = self.current_control.VS
+            gs200_I_meas = gs200_inst.GetCurrent()
+            picoscope_v_meas = np.average(picoscope_inst.getData('A',5E5,int(1e5)))
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 fout = open(datafile,"a")
-                fout.write('%s\t%f\t%s \t%f\t%f\t%f\n' % (curr_time,res[0],amp,res[1],res[2],res[3]))
+                fout.write('%s\t%f\t%s \t%s\t%s\t%f\t%f\t%f\n' % (curr_time,res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3]))
                 fout.close()
             
             #increment the current (if applicable)
@@ -830,7 +835,7 @@ class AcquisitionThread(Thread):
                 amp = int(self.getCurrent())
                 # self.display(res_s)
             
-            self.display('%s\t%f\t%s\t%f\t%f\t%f' % (ctime(curr_time),res[0],amp,res[1],res[2],res[3]))
+            self.display('%s\t%f\t%s\t%s\t%s\t%f\t%f\t%f' % (ctime(curr_time),res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3]))
 
             tm.append(curr_time)
             res1.append(res[0])
@@ -913,6 +918,7 @@ class ControlPanel(HasTraits):
             self.acquisition_thread.waitNsetThread.wants_abort = True
             self.acquisition_thread.waitNsetThread.paused = False
             self.acquisition_thread.waitNsetThread.resume()
+            self.acquisition_thread.waitNsetThread.currSet.turnOff()
             self.acquisition_thread.waitNsetThread.join()
             self.ac_bridge.disable_switching = False
             # self.acquisition_thread.waitNsetThread.state.notify()
