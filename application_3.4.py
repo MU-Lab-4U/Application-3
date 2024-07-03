@@ -178,7 +178,7 @@ class Bridge(HasTraits):
     Tmeas = Float(0, label="Delay", desc="delay between measurements [s]")
     Nscans = Int(1, label="fast Scans", desc="number of scans per point")
     Nscans_stable = Float(5, label="slow Scans", desc="number of scans per point during slow scanning time")
-    stblz_time = Int(40, label="Fast scanning time", desc="If current control is activated: Time before and after current is applied\nTime duration where the number of scans is equal to fastScans [s]")
+    stblz_time = Int(20, label="Fast scanning time", desc="If current control is activated: Time before and after current is applied\nTime duration where the number of scans is equal to fastScans [s]")
     stable_time = Int(10, label="Slow scanning time", desc="Time duration where the number of scans is equal to slowScans [s] \n (only takes effect if current control is off)")
     curr_scans = 1
     disable_switching = Bool(False, label="Only use slow Scans", desc="Disables switching between the number of scans and only uses the value defined in slow Scans")
@@ -192,7 +192,7 @@ class Bridge(HasTraits):
     Autorange_1 = Bool(False, label="Autorange", desc="autorange on/off")
     ### extra features ###
     Filter_1 = Bool(False, label= "Filter #1", desc="Filter for Channel #1 on/off")
-    SetlTime_1 = Int(5, label="Settling Time (fast acquisition)", desc="Enter the settling time")
+    SetlTime_1 = Int(3, label="Settling Time (fast acquisition)", desc="Enter the settling time")
     SetlTime_1_slow = Int(30, label="Settling Time (slow acquisition)", desc="Enter the settling time")
     Window_1 = Int(10, label="Window (fast acquisition)", desc="Enter the filter window (in %)")
     Window_1_slow = Int(10, label="Window (slow acquisition)", desc="Enter the filter window (in %)")
@@ -657,6 +657,7 @@ class WaitNsetThread(Thread):
     """
     wants_abort = False
     first = True
+    current_on = False
     
     def __init__(self, ls370_inst, Nscans_fast, currentControl_inst):
         super().__init__()
@@ -668,7 +669,7 @@ class WaitNsetThread(Thread):
         self.state = threading.Condition()
         if self.currentControl_inst.apply_curr:
             self.currSet = CurrentSetThread(self.currentControl_inst, self)
-        self.current_on = False
+        
     
     def run(self):
         #start the current control thread
@@ -689,7 +690,7 @@ class WaitNsetThread(Thread):
                     self.currSet.wants_abort = True
                 return
             ####################################################################################
-            # print("switching to fast mode")
+            # print(f"switching to fast mode for {self.ls370_inst.stblz_time*2} seconds")
             #first apply the filter
             if self.ls370_inst.Filter_1:
                 #sets the filter to fast mode
@@ -715,6 +716,7 @@ class WaitNsetThread(Thread):
                 #########################################################################
                 #update to slow mode
                 #first set filter to slow mode
+                
                 if self.ls370_inst.Filter_1:
                     #set the filter to slow mode
                     self.ls370_inst.MS.setFilter(on=1,channel='1',setlT=self.ls370_inst.SetlTime_1_slow, wind=self.ls370_inst.Window_1_slow)
@@ -728,8 +730,10 @@ class WaitNsetThread(Thread):
             # self.active_sleep(self.ls370_inst.stable_time) #old implementation
             #sleep with slow mode on between the current changes
             if self.currentControl_inst.apply_curr and self.current_on:
+                # print(f"Switching to slow mode for {self.currentControl_inst.tOn_s - 2*self.ls370_inst.stblz_time} seconds")
                 self.active_sleep(self.currentControl_inst.tOn_s - 2*self.ls370_inst.stblz_time-2)
-            elif self.currentControl_inst.apply_curr and self.current_on:
+            elif self.currentControl_inst.apply_curr and not self.current_on:
+                # print(f"Switching to slow mode for {self.currentControl_inst.tOff_s - 2*self.ls370_inst.stblz_time} seconds")
                 self.active_sleep(self.currentControl_inst.tOff_s - 2*self.ls370_inst.stblz_time-2)
             else:
                 self.active_sleep(self.ls370_inst.stable_time-2)
