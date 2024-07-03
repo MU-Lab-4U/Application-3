@@ -1006,7 +1006,7 @@ class keithley2200(object):
 from qcodes.instrument_drivers.yokogawa import YokogawaGS200
 
 class GS200(object):
-    def __init__(self,address='TCPIP1::128.131.126.38::inst0::INSTR'): #TODO the instrument does not seem connected
+    def __init__(self,address='TCPIP1::128.131.126.38::inst0::INSTR'): 
         #'USB0::0x0B21::0x0039::90Y412705::INSTR'
         try:
             print('Checking connection to GS200 Yokogawa DC voltage/Current source')

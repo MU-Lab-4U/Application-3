@@ -60,10 +60,10 @@ class CurrentControl(HasTraits):
     """
     
     #TODO: Time before applying current, time with current on, time with current off, list off currents
-    tBefore = Float(1, label="Time before applying current [min]")
+    tBefore = Float(0.1, label="Time before applying current [min]")
     tOn = Float(5, label="Time with current on [min]")
-    tOff = Float(5, label="Time with current off [min]")
-    currents = String("3E-7,5E-7,7E-7", label="List of currents applied", desc="List of all currents to be applied, in order, seperated with comma (\',\'), no whitespace")
+    tOff = Float(10, label="Time with current off [min]")
+    currents = String("0,1E-7,2E-7,3E-7,4E-7,5E-7,6E-7,7E-7", label="List of currents applied", desc="List of all currents to be applied, in order, seperated with comma (\',\'), no whitespace")
     apply_curr = Bool(False, label="Enable applying current", desc="WARNING: Don't use this mode together with \"slow scans only\"")
     CS = None
     VS = None
@@ -87,9 +87,12 @@ class CurrentControl(HasTraits):
                 if not self.CS:
                     self.CS=GS200()
                 sleep(1)
-                self.CS.SetMode("CURR")
-                sleep(1)
-                self.CS.SetCurrentRange(1E-3)
+                try:
+                    self.CS.SetMode("CURR")
+                    sleep(1)
+                    self.CS.SetCurrentRange(1E-3)
+                except:
+                    pass
             except Exception as e:
                 print(f"Error while connecting to GS200: {e}")
             try:
@@ -171,11 +174,11 @@ class Bridge(HasTraits):
     
     ExcitRange_asList = list(ExcitRangeList)
     
-    Tdelay = Float(0.1, label="Delay", desc="delay between scans [s]")
+    Tdelay = Float(0.01, label="Delay", desc="delay between scans [s]")
     Tmeas = Float(0, label="Delay", desc="delay between measurements [s]")
     Nscans = Int(1, label="fast Scans", desc="number of scans per point")
-    Nscans_stable = Float(20, label="slow Scans", desc="number of scans per point during slow scanning time")
-    stblz_time = Int(5, label="Fast scanning time", desc="If current control is activated: Time before and after current is applied\nTime duration where the number of scans is equal to fastScans [s]")
+    Nscans_stable = Float(5, label="slow Scans", desc="number of scans per point during slow scanning time")
+    stblz_time = Int(40, label="Fast scanning time", desc="If current control is activated: Time before and after current is applied\nTime duration where the number of scans is equal to fastScans [s]")
     stable_time = Int(10, label="Slow scanning time", desc="Time duration where the number of scans is equal to slowScans [s] \n (only takes effect if current control is off)")
     curr_scans = 1
     disable_switching = Bool(False, label="Only use slow Scans", desc="Disables switching between the number of scans and only uses the value defined in slow Scans")
@@ -599,13 +602,15 @@ def process(image, results_obj):
 class CurrentSetThread(Thread):
     wants_abort = False
     
-    def __init__(self, currentControl_inst):
+    def __init__(self, currentControl_inst, waitNsetThread_inst):
         super().__init__()
+        self.daemon = True
         self.currentControl_inst = currentControl_inst
+        self.waitNsetThread_inst = waitNsetThread_inst
     
     def run(self):
         #wait tBefore before setting the current
-        print(f"sleeping for {self.currentControl_inst.tBefore_s} seconds")
+        # print(f"sleeping for {self.currentControl_inst.tBefore_s} seconds")
         self.active_sleep(self.currentControl_inst.tBefore_s)
         if self.wants_abort:
             return
@@ -613,6 +618,7 @@ class CurrentSetThread(Thread):
         for setcurrent in self.currentControl_inst.curr_list:
             self.currentControl_inst.CS.SetCurrent(setcurrent) 
             self.currentControl_inst.CS.ON()
+            self.waitNsetThread_inst.current_on = True
             print(str(ctime())+' current on with I = '+str(setcurrent))
             #wait tOn with current on
             self.active_sleep(self.currentControl_inst.tOn_s)
@@ -621,6 +627,7 @@ class CurrentSetThread(Thread):
             #switch current off
             self.currentControl_inst.CS.SetCurrent(0)
             self.currentControl_inst.CS.OFF()
+            self.waitNsetThread_inst.current_on = False
             print(str(ctime())+' current off')
             #wait tOff with no current
             self.active_sleep(self.currentControl_inst.tOff_s)
@@ -660,7 +667,8 @@ class WaitNsetThread(Thread):
         self.currentControl_inst = currentControl_inst
         self.state = threading.Condition()
         if self.currentControl_inst.apply_curr:
-            self.currSet = CurrentSetThread(self.currentControl_inst)
+            self.currSet = CurrentSetThread(self.currentControl_inst, self)
+        self.current_on = False
     
     def run(self):
         #start the current control thread
@@ -688,13 +696,12 @@ class WaitNsetThread(Thread):
                 self.ls370_inst.MS.setFilter(on=1,channel='1',setlT=self.ls370_inst.SetlTime_1, wind=self.ls370_inst.Window_1)
             self.active_sleep(2) #wait for filter
             self.ls370_inst.curr_scans = self.Nscans_fast #sets the scans to fast mode
-            
                 
             #check if it was not aborted before sleeping
             if not self.wants_abort:
                 #sleep for user defined time stblz_time before and after the current change (fast mode)
                 if self.currentControl_inst.apply_curr:
-                    self.active_sleep(self.ls370_inst.stblz_time * 2-2)
+                    self.active_sleep(self.ls370_inst.stblz_time*2-2)
                 else:
                     #if current control is not active, just wait for the given time
                     self.active_sleep(self.ls370_inst.stblz_time-2)
@@ -720,8 +727,10 @@ class WaitNsetThread(Thread):
                 return        
             # self.active_sleep(self.ls370_inst.stable_time) #old implementation
             #sleep with slow mode on between the current changes
-            if self.currentControl_inst.apply_curr:
+            if self.currentControl_inst.apply_curr and self.current_on:
                 self.active_sleep(self.currentControl_inst.tOn_s - 2*self.ls370_inst.stblz_time-2)
+            elif self.currentControl_inst.apply_curr and self.current_on:
+                self.active_sleep(self.currentControl_inst.tOff_s - 2*self.ls370_inst.stblz_time-2)
             else:
                 self.active_sleep(self.ls370_inst.stable_time-2)
             
@@ -846,13 +855,13 @@ class AcquisitionThread(Thread):
             acc_arr.append(res_s)
             x = 20
             if itr % x == 0 and itr != 0:
-                fout = open(datafile,"a")
-                for res in acc_arr:
-                    with warnings.catch_warnings():
+                with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        #Write to file, following colums: Time | AC370 Ch1 | I from AC370 | I from GS200 | V from Picoscope | AC370 Ch2 | AC370 Ch3 | AC370 Ch4
-                        fout.write(res)
-                fout.close()
+                        fout = open(datafile,"a")
+                        for res_curr in acc_arr:
+                                #Write to file, following colums: Time | AC370 Ch1 | I from AC370 | I from GS200 | V from Picoscope | AC370 Ch2 | AC370 Ch3 | AC370 Ch4
+                                fout.write(res_curr)
+                        fout.close()
                 acc_arr = []
             
             #increment the current (if applicable)
@@ -862,8 +871,10 @@ class AcquisitionThread(Thread):
                 amp = int(self.getCurrent())
                 # self.display(res_s)
             
-            self.display('%s\t%f\t%s\t%s\t%s\t%f\t%f\t%f' % (ctime(curr_time),res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3]))
-
+            #self.display('%s\t%f\t%s\t%s\t%s\t%f\t%f\t%f' % (ctime(curr_time),res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3]))
+            res_s2 = '%s\t%f\t%s \t%s\t%s\t %f\t%f\t%f\n' % (ctime(curr_time),res[0],amp,gs200_I_meas,picoscope_v_meas,res[1],res[2],res[3])
+            self.display(res_s2)
+            
             tm.append(curr_time)
             res1.append(res[0])
             res2.append(res[1])
@@ -899,7 +910,7 @@ class ControlPanel(HasTraits):
         interaction between the objects and the GUI.
     """
     dir = 'K:\\Data ac370\\'
-    norm_file_name = datetime.datetime.now().date().__str__()+'_Cal_'+'Cp_227_New_16mK'+'.dat' 
+    norm_file_name = datetime.datetime.now().date().__str__()+'_Cal_'+'Cp_227_New_60mK'+'.dat' 
     
     f_name = File(dir+norm_file_name)
     experiment = Instance(Experiment, ())
