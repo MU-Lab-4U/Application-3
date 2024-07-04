@@ -12,6 +12,8 @@ from tqdm import tqdm
 import numpy as npy
 import sys
 import pyvisa
+from nptdms import TdmsFile
+from typing import List
 # rm = pyvisa.ResourceManager(r"C:\WINDOWS\system32\agvisa32.dll")
 rm = pyvisa.ResourceManager()
 lib = rm.visalib
@@ -215,6 +217,9 @@ class SX199(object):
 class WF1974(object):
     '''
 '''
+    #All the available functions for setFunc
+    functions = ['SIN', 'SQUARE', 'PULSE', 'RAMP', 'PWF', 'NOISE', 'DC', 'ARB', 'TRIANGLE']
+    
     def __init__(self,gpib_address='15', **kwargs):
         try:
             print("Checking connection to WF1974 ...")
@@ -241,6 +246,29 @@ class WF1974(object):
 
     def setAmpl(self, ampl):
         self.nf.write('SOUR:VOLT '+ampl)
+        
+    def setFunc(self, func):
+        """
+        Sets the function
+        Available functions: 'SINE', 'SQUARE', 'PULSE', 'RAMP', 'PWF', 'NOISE', 'DC', 'ARB', 'TRIANGLE'
+        Can be retrieved from the function array
+        """
+        self.nf.write('SOUR:FUNC '+func)
+    
+    def setOffset(self, offs):
+        self.nf.write('SOUR:VOLT:OFFS '+offs)
+    
+    def getFreq(self):
+        self.nf.write('SOUR:FREQ?')
+        return self.nf.read()
+
+    def getAmpl(self):
+        self.nf.query('SOUR:VOLT?')
+        return self.nf.read()
+    
+    def read(self):
+        return self.nf.read()
+
 
 
 class SR7124(object):
@@ -1107,7 +1135,7 @@ class Picoscope(object):
 
 import nidaqmx
 from nidaqmx.system import System
-from nidaqmx.constants import AcquisitionType, READ_ALL_AVAILABLE
+from nidaqmx.constants import AcquisitionType, READ_ALL_AVAILABLE, LoggingMode, LoggingOperation
 
 class NI_USB6211:
     
@@ -1135,7 +1163,7 @@ class NI_USB6211:
             task.ai_channels.add_ai_voltage_chan(self.device_name+"/"+channel, min_val=minv, max_val=maxv)
             return task.read()
     
-    def acquire_n(self, rate: float, channel: str, samps_n: int, minv: float = -5.0, maxv: float = 5.0):
+    def acquire_n(self, rate: float, channel: str, samps_n: int, minv: float = -5.0, maxv: float = 5.0, save: bool = False, path: str = ""):
         """Acquires finite amount of data using hardware timing
         
         Arguments:
@@ -1152,11 +1180,17 @@ class NI_USB6211:
                 minimum value you expect to measure.
         maxv (Optional[float]): Specifies in Volts the
                 maximum value you expect to measure.
+        save (bool): If true, the data is written to a file specified in path
+        path (str): Filepath where the date is saved to
         
         """
         with nidaqmx.Task() as task:
             task.ai_channels.add_ai_voltage_chan(self.device_name+"/"+channel, min_val=minv, max_val=maxv)
             task.timing.cfg_samp_clk_timing(rate, sample_mode=AcquisitionType.FINITE, samps_per_chan=samps_n)
+            if save:
+                if not path.endswith(".tdms"):
+                    raise Exception("Incorrect file name extension, check if filename ends with .tdms")
+                task.in_stream.configure_logging(path, LoggingMode.LOG_AND_READ, operation=LoggingOperation.CREATE_OR_REPLACE)
             data = task.read(READ_ALL_AVAILABLE)
             # print("Acquired data: [" + ", ".join(f"{value:f}" for value in data) + "]")
             return data
@@ -1190,10 +1224,12 @@ class NI_USB6211:
             # print("Acquired data: [" + ", ".join(f"{value:f}" for value in data) + "]")
             return data
         
-    #TODO 2 channels in parallel
-    def acquire_2chan_n(self, channel1: str, channel2: str, minv1: float, maxv1: float, minv2: float, maxv2: float, rate: float, samps_n: int):
+    def acquire_2chan_n(self, channel1: str, channel2: str, rate: float, samps_n: int,
+                        minv1: float = -5, maxv1: float = 5, minv2: float = -5, maxv2: float = 5,
+                        save: bool = False, path: str = "") -> List[List[float]]:
         """
         Adds multiple analog input channels to a task, configures their range, and reads all data in range
+        Returns a list of lists of floats, one list per channel
         
         Arguments:
         ---------
@@ -1209,11 +1245,175 @@ class NI_USB6211:
         samps_n (int): Specifies the number of
                 samples to acquire or generate for each channel in the task,
                 returns an error if the specified value is negative.
+        save (bool): If true, the data is written to a file specified in path
+        path (str): Filepath where the date is saved to
         """
         with nidaqmx.Task() as task:
-            task.ai_channels.add_ai_voltage_chan_with_excit(self.device_name+"/"+channel1, min_val=minv1, max_val=maxv1)
-            task.ai_channels.add_ai_voltage_chan_with_excit(self.device_name+"/"+channel2, min_val=minv2, max_val=maxv2)
+            task.ai_channels.add_ai_voltage_chan(self.device_name+"/"+channel1, min_val=minv1, max_val=maxv1)
+            task.ai_channels.add_ai_voltage_chan(self.device_name+"/"+channel2, min_val=minv2, max_val=maxv2)
             task.timing.cfg_samp_clk_timing(rate, sample_mode=AcquisitionType.FINITE, samps_per_chan=samps_n)
-            data = task.read(READ_ALL_AVAILABLE)
             # print("Acquired data: [" + ", ".join(f"{value:f}" for value in data) + "]")
+            if save:
+                if not path.endswith(".tdms"):
+                    raise Exception("Incorrect file name extension, check if filename ends with .tdms")
+                task.in_stream.configure_logging(path, LoggingMode.LOG_AND_READ, operation=LoggingOperation.CREATE_OR_REPLACE)
+            data = task.read(READ_ALL_AVAILABLE)
             return data
+        
+    def acquire_n_stable_voltage(self, input_channel: str, rate: float, samps_n: int, 
+                                 output_channel: str, output_voltage: float, 
+                                 save: bool = False, path: str = ""
+                                 ) -> List[List[float]]:
+        """
+        Adds an analog voltage output channel, configures its range, outputs the voltage and measures in the input channel
+        
+        Arguments:
+        ---------
+        input_channel (str): Specifies the input channel for measuring
+        rate (float): Specifies the sampling rate in samples per
+            channel per second. If you use an external source for
+            the Sample Clock, set this input to the maximum expected
+            rate of that clock.
+        samps_n (int): Specifies the number of
+                samples to acquire or generate for each channel in the task,
+                returns an error if the specified value is negative.
+        output_channel (str): Specifies the output channeö
+        output_voltage (float): Specifies the output voltage
+        save (bool): If true, the data is written to a file specified in path
+        path (str): Filepath where the date is saved to
+        """
+        with nidaqmx.Task() as ao_task:
+            ao_task.ao_channels.add_ao_voltage_chan(self.device_name+"/"+output_channel)
+            
+            # Start the task and write the voltage
+            # ao_task.timing.cfg_samp_clk_timing(rate, sample_mode=AcquisitionType.CONTINUOUS)
+            
+            ao_task.start()
+            ao_task.write(output_voltage)
+            print(f"Applying {output_voltage} V to {self.device_name+"/"+output_channel}")
+            data = self.acquire_n(rate=rate,channel=input_channel,samps_n=samps_n, path=path, save=save)
+            ao_task.stop()
+            return data
+    
+    def acquire_n_stableV_2chan(self, input_channel1: str, input_channel2: str, rate: float, 
+                               samps_n: int, output_channel1: str, output_voltage: float,
+                               save: bool = False, path: str = ""
+                               ) -> List[List[float]]:
+        """
+        Adds 1 analog voltage output channel, configures its range and outputs the voltage then measures it in 2 input channels quasi-parallel
+        
+        Arguments:
+        ---------
+        input_channel[i] (str): Specifies the channel i
+        minv[i] (Optional[float]): Specifies in Volts the
+                minimum value you expect to measure. (for channel i)
+        maxv[i] (Optional[float]): Specifies in Volts the
+                maximum value you expect to measure. (for channel i)
+        rate (float): Specifies the sampling rate in samples per
+            channel per second. If you use an external source for
+            the Sample Clock, set this input to the maximum expected
+            rate of that clock.
+        samps_n (int): Specifies the number of
+                samples to acquire or generate for each channel in the task,
+                returns an error if the specified value is negative.
+        input_channel[i] (str): Specifies the channel i
+        output_voltage[i] (float): Specifies the voltage to be applied
+        save (bool): If true, the data is written to a file specified in path
+        path (str): Filepath where the date is saved to, file has to end with .tdms
+        """
+        with nidaqmx.Task() as ao_task1:
+            ao_task1.ao_channels.add_ao_voltage_chan(self.device_name+"/"+output_channel1)
+            #configure output channel
+            # ao_task1.timing.cfg_samp_clk_timing(rate, sample_mode=AcquisitionType.CONTINUOUS)
+            ao_task1.write(output_voltage)
+            #start applying current
+            ao_task1.start()
+            #make the measurement and stop applying voltage after
+            data = self.acquire_2chan_n(input_channel1, input_channel2, rate, samps_n, save=save, path=path)
+            ao_task1.stop()
+            
+            return data
+        
+        
+    def acquire_n_stableV_2x2chan(self, input_channel1: str, input_channel2: str, minv1: float, 
+                               maxv1: float, minv2: float, maxv2: float, rate: float, 
+                               samps_n: int, output_channel1: str, output_channel2: str,
+                               output_voltage1: float, output_voltage2: float, save: bool = False, path: str = ""
+                               ) -> List[List[float]]:
+        """
+        Adds 2 analog voltage output channels, configures their range and outputs the voltage then measures it in 2 input channels quasi-parallel
+        
+        Arguments:
+        ---------
+        input_channel[i] (str): Specifies the channel i
+        minv[i] (Optional[float]): Specifies in Volts the
+                minimum value you expect to measure. (for channel i)
+        maxv[i] (Optional[float]): Specifies in Volts the
+                maximum value you expect to measure. (for channel i)
+        rate (float): Specifies the sampling rate in samples per
+            channel per second. If you use an external source for
+            the Sample Clock, set this input to the maximum expected
+            rate of that clock.
+        samps_n (int): Specifies the number of
+                samples to acquire or generate for each channel in the task,
+                returns an error if the specified value is negative.
+        input_channel[i] (str): Specifies the channel i
+        output_voltage[i] (float): Specifies the voltage to be applied
+        save (bool): If true, the data is written to a file specified in path
+        path (str): Filepath where the date is saved to
+        """
+        with nidaqmx.Task() as ao_task1, nidaqmx.Task() as ao_task2:
+            ao_task1.ao_channels.add_ao_voltage_chan(self.device_name+"/"+output_channel1)
+            ao_task1.ao_channels.add_ao_voltage_chan(self.device_name+"/"+output_channel2)
+            ao_task1.write(output_voltage1)
+            ao_task2.write(output_voltage2)
+            #start applying current on both channels
+            ao_task1.start()
+            ao_task2.start()
+            
+            #make the measurement
+            data = self.acquire_2chan_n(input_channel1, input_channel2, rate, samps_n, save=save, path=path)
+            
+            ao_task1.stop()
+            ao_task2.stop()
+            
+            return data
+    
+
+    
+    def read_tdms_file(self, path: str):
+        """
+        Opens and reads a tdms file, 
+        
+        Arguments
+        -------
+        path (str): The filepath of the tdms file
+        """
+        arr = []
+        with TdmsFile.read(path) as tdms_file:
+            for group in tdms_file.groups():
+                for channel in group.channels():
+                    data = channel[:]
+                    arr.append(data)
+                    # print("data: [" + ", ".join(f"{value:f}" for value in data) + "]")
+        return arr
+    
+    def convert_tdms(self, source: str, path: str):
+        """
+        Converts a .tdms file to any file mode (please specify in file suffix)
+        
+        Arguments
+        -------
+        source (str): The filepath of the tdms file
+        path (str): The filepath of the txt file
+        """
+        data = self.read_tdms_file(source)
+        fileMode = 'w'
+        file = open(path, fileMode)
+        file.write("###" + time.ctime() + "###\n")
+        itr = 1
+        for arr in data:
+            file.write("### Channel "+ str(itr) + "###")
+            for x in arr:
+                file.write(str(x)+"\n")
+        file.close()
